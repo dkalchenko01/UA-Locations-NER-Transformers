@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+.ipynb_checkpoints/
+.env
+data/*
+!data/splits/
+data/splits/*
+!data/splits/*.parquet
+checkpoints/
+outputs/
+*.pt
+*.pth
+*.ckpt
+submission*.csv
+wandb/
