@@ -33,3 +33,13 @@ def tokenize_datasets(datasets, tokenizer, label_to_id, max_length):
         result[split] = tokenized
 
     return result
+
+def prepare_labeling_dataset(df, tokenizer, label_to_id, max_length):
+    dataset = Dataset.from_pandas(df, preserve_index=False)
+    return dataset.map(
+        tokenize_batch, batched=True,
+        fn_kwargs={
+            "tokenizer": tokenizer,
+            "label_to_id": label_to_id,
+            "max_length": max_length,
+            "strict": False})
