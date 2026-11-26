@@ -1,5 +1,8 @@
 import unicodedata
-
+import numpy as np
+import pandas as pd
+from collections import Counter
+from src.eda_scan import has_pair_shape
 from src.eda_scan import parse_spans
 
 def drop_conflicting_annotations(df):
@@ -87,3 +90,50 @@ def clean_locations_v3(locations):
 
 def serialize_spans(spans):
     return spans if isinstance(spans, str) else repr([tuple(map(int, span)) for span in spans])
+
+
+def evaluate_tokenizer(tokenizer, datasets, max_length=512):
+    results = {}
+
+    for name, df in datasets.items():
+        lengths = []
+        unknown = 0
+        alignment = Counter()
+
+        for row in df.itertuples():
+            encoding = tokenizer(row.text, return_offsets_mapping=True, truncation=False, verbose=False)
+            ids = encoding["input_ids"]
+            offsets = encoding["offset_mapping"]
+
+            lengths.append(len(ids))
+            unknown += ids.count(tokenizer.unk_token_id)
+
+            if hasattr(row, "loc_markers"):
+                spans = parse_spans(row.loc_markers)
+                if not has_pair_shape(spans):
+                    continue
+
+                for start, end in spans:
+                    overlapping = [(a, b) for a, b in offsets if a < b and a < end and b > start]
+
+                    if not overlapping:
+                        alignment["missing"] += 1
+                    elif overlapping[0][0] == start and overlapping[-1][1] == end:
+                        alignment["exact"] += 1
+                    else:
+                        alignment["partial"] += 1
+
+        total_spans = sum(alignment.values())
+        results[name] = {
+            "Texts": len(lengths),
+            "Median tokens": np.median(lengths),
+            "P95 tokens": np.percentile(lengths, 95),
+            "Max tokens": max(lengths),
+            "Over max length (%)": 100 * np.mean(np.array(lengths) > max_length),
+            "Unknown tokens (%)": 100 * unknown / sum(lengths),
+            "Exact alignment (%)": 100 * alignment["exact"] / total_spans if total_spans else np.nan,
+            "Partial alignment (%)": 100 * alignment["partial"] / total_spans if total_spans else np.nan,
+            "Missing alignment (%)": 100 * alignment["missing"] / total_spans if total_spans else np.nan
+        }
+
+    return pd.DataFrame(results).round(3)
