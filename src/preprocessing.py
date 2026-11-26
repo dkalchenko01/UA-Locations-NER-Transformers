@@ -21,17 +21,22 @@ def preprocess_data(df):
     return df
 
 
-def spans_to_bio(offsets, spans):
-    labels = ["O"] * len(offsets)
+def spans_to_bio(offsets, spans, label_to_id, strict=True):
+    labels = [label_to_id["O"] if a < b else -100 for a, b in offsets]
+
     for start, end in spans:
-        indices = [i for i, (a, b) in enumerate(offsets) if a < end and b > start]
+        indices = [i for i, (a, b) in enumerate(offsets) if a < b and a < end and b > start]
+
         if not indices:
             raise ValueError(f"No tokens for span {(start, end)}")
-        if offsets[indices[0]][0] != start or offsets[indices[-1]][1] != end:
+
+        if strict and (offsets[indices[0]][0] != start or offsets[indices[-1]][1] != end):
             raise ValueError(f"Partial alignment for span {(start, end)}")
-        labels[indices[0]] = "B-LOC"
+
+        labels[indices[0]] = label_to_id["B-LOC"]
         for i in indices[1:]:
-            labels[i] = "I-LOC"
+            labels[i] = label_to_id["I-LOC"]
+
     return labels
 
 
