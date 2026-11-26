@@ -34,10 +34,37 @@ def select_manifest_rows(df, manifest, source, split):
 
 
 def load_data_splits(environment, splits_dir, sources=("uk", "ru"), chunksize=100_000,
-                     manifest_name="validation_manifest"):
-    data_dir = get_data_dir(environment)
+                     manifest_name="validation_manifest_v2", reannotated=False,
+                     reannotated_dir="/content/drive/MyDrive/UA-Locations-NER-Transformers/data/reannotated"):
     manifest = load_manifest(splits_dir, name=manifest_name)
     result = {}
+
+    if reannotated:
+        if tuple(sources) != ("uk",):
+            raise ValueError("Reannotated data is available only for Ukrainian")
+
+        reannotated_dir = Path(reannotated_dir)
+        source_manifest = manifest[manifest["source"] == "uk"]
+
+        for split in source_manifest["split"].unique():
+            path = reannotated_dir / f"reannotated_{split}.csv"
+
+            if not path.is_file():
+                raise FileNotFoundError(f"Reannotated dataset not found: {path}")
+
+            df = pd.read_csv(path, keep_default_na=False)
+            df = df.set_index("row_id", verify_integrity=True)
+
+            expected_ids = source_manifest.loc[source_manifest["split"] == split, "row_id"]
+
+            if set(df.index) != set(expected_ids):
+                raise ValueError(f"Row IDs do not match manifest: {split}")
+
+            result[f"uk_{split}"] = df.loc[expected_ids].copy()
+
+        return result
+
+    data_dir = get_data_dir(environment)
 
     for source in sources:
         source_manifest = manifest[manifest["source"] == source]
@@ -48,16 +75,16 @@ def load_data_splits(environment, splits_dir, sources=("uk", "ru"), chunksize=10
         for chunk in pd.read_csv(data_dir / f"{source}_geo_dataset.csv", chunksize=chunksize):
             chunk.index = pd.RangeIndex(offset, offset + len(chunk))
             selected = chunk.loc[chunk.index.isin(required_ids)]
+
             if not selected.empty:
                 parts.append(selected)
+
             offset += len(chunk)
 
         df = pd.concat(parts)
 
         for split in source_manifest["split"].unique():
-            result[f"{source}_{split}"] = select_manifest_rows(
-                df, source_manifest, source, split
-            )
+            result[f"{source}_{split}"] = select_manifest_rows(df, source_manifest, source, split)
 
         del df, parts
 

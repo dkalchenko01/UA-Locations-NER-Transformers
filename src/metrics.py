@@ -1,12 +1,6 @@
-"""Competition metric supplied by the user, preserving its literal regex.
-
-The first regex is intentionally NOT an f-string. Do not correct it or remove
-empty normalized strings: either change would alter official matching semantics.
-"""
-
 import re
-import string
 from typing import List
+from seqeval.metrics import f1_score, precision_score, recall_score
 
 
 def hard_processing(text):
@@ -52,56 +46,50 @@ def comp_metric(y_true: List[List[str]], y_pred: List[List[str]]):
         f1 = 2 * precision * recall / (precision + recall)
     return round(f1, 8)
 
+def compare_locations(gold, predicted):
+    gold = {hard_processing(x) for x in gold}
+    predicted = {hard_processing(x) for x in predicted}
 
-def location_errors(gold, predicted):
-    """Normalized FP/FN strings for diagnostics, using the same set semantics."""
-    truth = {hard_processing(value) for value in gold}
-    guess = {hard_processing(value) for value in predicted}
-    return {"false_positives": sorted(guess - truth),
-            "false_negatives": sorted(truth - guess)}
+    return {
+        "true_positives": gold & predicted,
+        "false_positives": predicted - gold,
+        "false_negatives": gold - predicted
+    }
 
-
-def prediction_metrics(y_true, y_pred):
-    f1 = comp_metric(y_true, y_pred)
+def compute_kaggle_metrics(y_true, y_pred):
     tp, fp, fn = 0, 0, 0
 
     for gold, predicted in zip(y_true, y_pred):
-        gold = set(hard_processing(value) for value in gold)
-        predicted = set(hard_processing(value) for value in predicted)
+        comparison = compare_locations(gold, predicted)
 
-        tp += len(gold & predicted)
-        fp += len(predicted - gold)
-        fn += len(gold - predicted)
+        tp += len(comparison["true_positives"])
+        fp += len(comparison["false_positives"])
+        fn += len(comparison["false_negatives"])
 
     precision = tp / (tp + fp) if tp + fp else float(tp + fn == 0)
     recall = tp / (tp + fn) if tp + fn else 1.0
 
-    return {"f1": f1,
+    return {
+        "f1": comp_metric(y_true, y_pred),
         "precision": precision,
         "recall": recall,
         "TP": tp,
         "FP": fp,
-        "FN": fn}
+        "FN": fn
+    }
 
-def competition_scores(records, predictions, cleaner=None):
-    scores = {}
-    sources = list(dict.fromkeys(record["source"] for record in records))
+def compute_kaggle_metrics_by_source(y_true, y_pred, sources):
+    results = {"combined": compute_kaggle_metrics(y_true, y_pred)}
+    for source in sorted(set(sources)):
+        indices = [i for i, s in enumerate(sources) if s == source]
 
-    for source in sources + ["combined"]:
-        selected = records if source == "combined" else [
-            record for record in records if record["source"] == source
-        ]
-        gold = [record["gold_locations"] for record in selected]
-        predicted = [predictions[record["text_id"]]["locations"] for record in selected]
+        results[source] = compute_kaggle_metrics([y_true[i] for i in indices], [y_pred[i] for i in indices])
+    return results
 
-        if cleaner is not None:
-            predicted = [cleaner(locations) for locations in predicted]
 
-        if source == "combined":
-            metrics = prediction_metrics(gold, predicted)
-            scores["combined_comp_f1"] = metrics.pop("f1")
-            scores.update(metrics)
-        else:
-            scores[f"{source}_comp_f1"] = comp_metric(gold, predicted)
-
-    return scores
+def compute_bio_metrics(y_true, y_pred):
+    return {
+        "entity_f1": f1_score(y_true, y_pred, zero_division=0),
+        "entity_precision": precision_score(y_true, y_pred, zero_division=0),
+        "entity_recall": recall_score(y_true, y_pred, zero_division=0)
+    }
