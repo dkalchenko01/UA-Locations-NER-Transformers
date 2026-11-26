@@ -40,24 +40,25 @@ def spans_to_bio(offsets, spans, label_to_id, strict=True):
     return labels
 
 
-def prepare_bio_data(tokenizer, df, source):
-    records = []
-    skipped_ids = []
-    for row_id, row in df.iterrows():
-        spans = parse_spans(row["loc_markers"])
-        encoding = tokenizer.encode(row["text"], add_special_tokens=False)
+def tokenize_batch(batch, tokenizer, label_to_id, max_length, strict=True):
+    encoding = tokenizer(batch["text"], truncation=True, max_length=max_length, return_offsets_mapping=True)
+    labels = []
+    valid = []
+
+    for offsets, raw in zip(encoding["offset_mapping"], batch["loc_markers"]):
+        spans = parse_spans(raw)
         try:
-            labels = spans_to_bio(encoding.offsets, spans)
+            if not has_pair_shape(spans):
+                raise ValueError("Invalid spans")
+            labels.append(spans_to_bio(offsets, spans, label_to_id, strict=strict))
+            valid.append(True)
         except ValueError:
-            skipped_ids.append(f"{source}_{row_id}")
-            continue
-        records.append({
-            "text_id": f"{source}_{row_id}",
-            "input_ids": encoding.ids,
-            "offsets": encoding.offsets,
-            "labels": labels
-        })
-    return records, skipped_ids
+            labels.append([-100] * len(offsets))
+            valid.append(False)
+
+    encoding["labels"] = labels
+    encoding["valid"] = valid
+    return encoding
 
 
 def bio_to_spans(labels, offsets):
