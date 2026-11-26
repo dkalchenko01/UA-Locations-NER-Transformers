@@ -41,6 +41,17 @@ class TransformerNER(nn.Module):
             loss = self.loss_fn(logits.reshape(-1, logits.size(-1)), labels.reshape(-1))
         return TokenClassifierOutput(loss=loss, logits=logits)
 
+    def freeze_encoder(self, trainable_layers):
+        layers = self.encoder.encoder.layer
+
+        if not 0 <= trainable_layers <= len(layers):
+            raise ValueError("Invalid number of trainable layers")
+
+        self.encoder.requires_grad_(False)
+        if trainable_layers > 0:
+            for layer in layers[-trainable_layers:]:
+                layer.requires_grad_(True)
+
     def gradient_checkpointing_enable(self, **kwargs):
         self.encoder.gradient_checkpointing_enable(**kwargs)
 
