@@ -1,9 +1,6 @@
-"""Inference-only location cleanup and word-boundary experiments."""
-
 import unicodedata
 
 from src.metrics import hard_processing
-from src.preprocessing import clean_locations_v3
 
 EDGE_CHARS = ' \t\r\n,;:!?…|•"«»“”„'
 CONNECTORS = "'’ʼ-‐‑"
@@ -45,6 +42,14 @@ def restore_word(text, start, end):
 
     return start, end
 
+def clean_locations_v3(locations):
+    cleaned = []
+    for location in locations:
+        location = "".join(ch for ch in location if not unicodedata.category(ch).startswith("So"))
+        location = location.strip()
+        if any(ch.isalnum() for ch in location):
+            cleaned.append(location)
+    return cleaned
 
 def postprocess(text, spans, expand=False, trim=False, empty=False):
     locations = []

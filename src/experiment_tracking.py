@@ -1,37 +1,15 @@
-"""Shared experiment tracking for UA Locations NER (BiLSTM, BiGRU, etc.).
-
-Requires: wandb. Does not train models or compute competition metrics.
-
-Configure WANDB_API_KEY (e.g. Colab Secrets) and, for Forge,
-WANDB_BASE_URL=https://api.forge.coreweave.com before start_run().
-
-Metric conventions:
-  train/loss
-  val_v1/uk_comp_f1, val_v1/ru_comp_f1, val_v1/combined_comp_f1
-  val_v1/uk_loss, val_v1/ru_loss, val_v1/combined_loss
-  best/uk_comp_f1, best/epoch
-  diagnostic/labeling_sample/clean_v3/comp_f1
-  kaggle/clean_v3/public_f1
-
-A fixed validation manifest and metric version are required for meaningful
-cross-model comparisons. Never use labeling_sample or public Kaggle F1 for Sweeps.
-"""
-
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import wandb
 
 DEFAULT_ENTITY = "daldoshyna-kyiv-school-of-economics"
-DEFAULT_PROJECT = "ua-location-ner"
-
+DEFAULT_PROJECT = "ua-location-ner-transformers"
 
 def sha256_file(path: str | Path) -> str:
     """Fingerprint an existing file without uploading its content."""
@@ -65,7 +43,7 @@ def start_run(
     model: str,
     config: Mapping[str, Any],
     name: str | None = None,
-    validation_version: str = "v1",
+    validation_version: str = "v2",
     metric_version: str = "kaggle_original_regex_v1",
     postprocessing_version: str = "raw",
     entity: str = DEFAULT_ENTITY,
@@ -124,75 +102,12 @@ def start_run(
     )
     if run is None:
         raise RuntimeError("wandb.init() did not return a run")
-
-    # History x-axis is the actual epoch, not W&B's internal logging step.
-    run.define_metric("epoch")
-    run.define_metric("train/*", step_metric="epoch")
-    run.define_metric(f"val_{validation_version}/*", step_metric="epoch")
-    run.define_metric("time/*", step_metric="epoch")
+    
+    # Use Trainer's global step as the W&B history x-axis
+    run.define_metric("train/global_step")
+    run.define_metric("*", step_metric="train/global_step")
     return run
 
-
-def log_epoch(
-    run: Any,
-    epoch: int,
-    epoch_result: Mapping[str, Any],
-    *,
-    validation_version: str | None = None,
-    epoch_seconds: float | None = None,
-    selection_metric: str = "uk_comp_f1",
-    extra_metrics: Mapping[str, float] | None = None,
-) -> None:
-    """Log one already-computed epoch_result from the current notebooks.
-
-    Supported input keys: train_loss, uk/ru/combined_val_loss,
-    uk/ru/combined_comp_f1, precision, recall, TP, FP, FN.
-    Does not evaluate or select a checkpoint.
-    """
-    if epoch < 1:
-        raise ValueError("epoch must be >= 1")
-    version = validation_version or run.config.get("validation_version", "v1")
-    prefix = f"val_{version}"
-    metrics: dict[str, Any] = {"epoch": int(epoch)}
-
-    if epoch_result.get("train_loss") is not None:
-        metrics["train/loss"] = float(epoch_result["train_loss"])
-    for source in ("uk", "ru", "combined"):
-        if epoch_result.get(f"{source}_val_loss") is not None:
-            metrics[f"{prefix}/{source}_loss"] = float(
-                epoch_result[f"{source}_val_loss"]
-            )
-        if epoch_result.get(f"{source}_comp_f1") is not None:
-            metrics[f"{prefix}/{source}_comp_f1"] = float(
-                epoch_result[f"{source}_comp_f1"]
-            )
-
-    for name in ("precision", "recall", "TP", "FP", "FN"):
-        if epoch_result.get(name) is not None:
-            metrics[f"{prefix}/{name}"] = float(epoch_result[name])
-
-    if epoch_seconds is not None:
-        metrics["time/epoch_seconds"] = float(epoch_seconds)
-    if extra_metrics is not None:
-        for key, value in extra_metrics.items():
-            if key in metrics or key == "epoch":
-                raise ValueError(f"Duplicate metric key: {key}")
-            metrics[key] = float(value)
-
-    run.log(metrics)
-
-    # Sweep-compatible *best* summary (not merely last epoch's F1).
-    current_score = epoch_result.get(selection_metric)
-    if current_score is not None:
-        score = float(current_score)
-        if not math.isfinite(score):
-            raise ValueError(f"Non-finite selection metric: {selection_metric}")
-        key = f"best/{selection_metric}"
-        previous = run.summary.get(key)
-        if previous is None or score > float(previous):
-            run.summary[key] = score
-            run.summary["best/epoch"] = int(epoch)
-            run.summary["best/selection_metric"] = selection_metric
 
 
 def log_evaluation(
@@ -239,22 +154,21 @@ def log_evaluation(
         run.log({f"{prefix}/examples": table})
 
 
-def log_checkpoint(
-    run: Any,
-    path: str | Path,
-    *,
-    artifact_name: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-) -> None:
-    """Upload an existing checkpoint as a versioned W&B model artifact."""
+def log_checkpoint(run, path, *, artifact_name=None, metadata=None):
     checkpoint = Path(path)
-    if not checkpoint.is_file():
+    if not checkpoint.exists():
         raise FileNotFoundError(checkpoint)
+
     model = str(run.config.get("model", "model")).lower()
     default_name = f"{model}-{run.id}-best"
     name = re.sub(r"[^A-Za-z0-9_.-]", "-", artifact_name or default_name)
     artifact = wandb.Artifact(name=name, type="model", metadata=dict(metadata or {}))
-    artifact.add_file(str(checkpoint))
+
+    if checkpoint.is_dir():
+        artifact.add_dir(str(checkpoint))
+    else:
+        artifact.add_file(str(checkpoint))
+
     run.log_artifact(artifact)
     run.summary["best/checkpoint_artifact"] = name
     run.summary["best/checkpoint_local"] = str(checkpoint)
@@ -266,7 +180,7 @@ def finish_run(
     summary: Mapping[str, Any] | None = None,
     best_epoch: int | None = None,
     best_score: float | None = None,
-    selection_metric: str = "uk_comp_f1",
+    selection_metric: str = "f1",
     checkpoint_path: str | Path | None = None,
     upload_checkpoint: bool = False,
 ) -> None:
@@ -313,52 +227,3 @@ def log_kaggle_result(
         run_or_path.summary[f"{key}/public_f1"] = float(public_f1)
         run_or_path.summary[f"{key}/submission_filename"] = submission_filename
 
-
-@dataclass
-class EarlyStopping:
-    """Optional training-loop helper, independent of W&B.
-
-    Call step(score, epoch) AFTER validation, save best checkpoint if improved,
-    then break if should_stop. patience counts consecutive non-improving epochs.
-    min_delta=0 matches strict '>' best-checkpoint selection for F1.
-    """
-
-    patience: int = 2
-    mode: str = "max"
-    min_delta: float = 0.0
-    min_epochs: int = 1
-    best_score: float | None = field(default=None, init=False)
-    best_epoch: int | None = field(default=None, init=False)
-    bad_epochs: int = field(default=0, init=False)
-    should_stop: bool = field(default=False, init=False)
-
-    def __post_init__(self) -> None:
-        if self.mode not in {"max", "min"}:
-            raise ValueError("mode must be 'max' or 'min'")
-        if self.patience < 1 or self.min_delta < 0 or self.min_epochs < 1:
-            raise ValueError("patience >= 1, min_delta >= 0, min_epochs >= 1 required")
-
-    def step(self, score: float, epoch: int) -> bool:
-        """Return True if improved; inspect .should_stop to end training."""
-        score = float(score)
-        if not math.isfinite(score):
-            raise ValueError("Early stopping score must be finite")
-        if epoch < 1:
-            raise ValueError("epoch must be >= 1")
-        if self.best_score is None:
-            improved = True
-        elif self.mode == "max":
-            improved = score > self.best_score + self.min_delta
-        else:
-            improved = score < self.best_score - self.min_delta
-
-        if improved:
-            self.best_score = score
-            self.best_epoch = epoch
-            self.bad_epochs = 0
-        else:
-            self.bad_epochs += 1
-        self.should_stop = (
-            epoch >= self.min_epochs and self.bad_epochs >= self.patience
-        )
-        return improved

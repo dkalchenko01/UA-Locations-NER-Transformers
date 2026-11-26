@@ -43,8 +43,11 @@ def viterbi_decode(logits, lengths, label_to_id, records=None):
     return paths
 
 
-def decode_locations(predictions, offsets, text, id_to_label):
+def decode_spans(predictions, offsets, id_to_label):
     labels = [id_to_label[int(x)] for x in predictions]
-    spans = bio_to_spans(labels, offsets)
+    return bio_to_spans(labels, offsets)
 
+
+def decode_locations(predictions, offsets, text, id_to_label):
+    spans = decode_spans(predictions, offsets, id_to_label)
     return [text[start:end] for start, end in spans]

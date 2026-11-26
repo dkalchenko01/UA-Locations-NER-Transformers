@@ -1,4 +1,3 @@
-import unicodedata
 import numpy as np
 import pandas as pd
 from collections import Counter
@@ -82,16 +81,6 @@ def bio_to_spans(labels, offsets):
     if start is not None:
         spans.append((start, end))
     return spans
-
-
-def clean_locations_v3(locations):
-    cleaned = []
-    for location in locations:
-        location = "".join(ch for ch in location if not unicodedata.category(ch).startswith("So"))
-        location = location.strip()
-        if any(ch.isalnum() for ch in location):
-            cleaned.append(location)
-    return cleaned
 
 
 def serialize_spans(spans):
