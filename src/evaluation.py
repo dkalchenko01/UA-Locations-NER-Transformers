@@ -55,9 +55,13 @@ def build_compute_metrics(dataset, label_to_id):
             true_bio.append([id_to_label[int(gold[i])] for i in indices if gold[i] != -100])
             pred_bio.append([id_to_label[int(p)] for i, p in zip(indices, pred) if gold[i] != -100])
 
-            locations = row["locations"]
-            if isinstance(locations, str):
-                locations = ast.literal_eval(locations)
+            if "locations" in row:
+                locations = row["locations"]
+                if isinstance(locations, str):
+                    locations = ast.literal_eval(locations)
+            else:
+                spans = ast.literal_eval(row["loc_markers"])
+                locations = [row["text"][start:end] for start, end in spans]
 
             true_locations.append(locations)
             pred_locations.append(decode_locations(pred, offsets, row["text"], id_to_label))
