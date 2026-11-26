@@ -1,6 +1,8 @@
 import pandas as pd
 from datasets import Dataset, DatasetDict
 from src.preprocessing import tokenize_batch
+from pathlib import Path
+from datasets import load_from_disk
 
 
 def create_datasets(splits, sources):
@@ -43,3 +45,14 @@ def prepare_labeling_dataset(df, tokenizer, label_to_id, max_length):
             "label_to_id": label_to_id,
             "max_length": max_length,
             "strict": False})
+
+def load_or_tokenize_datasets(datasets, tokenizer, label_to_id, max_length, cache_path):
+    cache_path = Path(cache_path)
+
+    if cache_path.exists():
+        print(f"Loading tokenized datasets: {cache_path.name}")
+        return load_from_disk(str(cache_path))
+
+    tokenized = tokenize_datasets(datasets, tokenizer, label_to_id, max_length)
+    tokenized.save_to_disk(str(cache_path))
+    return tokenized
