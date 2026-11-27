@@ -35,9 +35,9 @@ def build_compute_metrics(dataset, label_to_id):
     def compute_metrics(eval_pred, compute_result=False):
         nonlocal cursor
 
-        logits = eval_pred.predictions
-        labels = eval_pred.label_ids
-        inputs = eval_pred.inputs
+        logits = eval_pred.predictions.detach().float().cpu()
+        labels = eval_pred.label_ids.detach().cpu()
+        inputs = {k: v.detach().cpu() for k, v in eval_pred.inputs.items()}
 
         batch_size = len(logits)
         rows = [dataset[i] for i in range(cursor, cursor + batch_size)]
