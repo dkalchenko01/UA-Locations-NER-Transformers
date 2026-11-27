@@ -39,30 +39,30 @@ def load_data_splits(environment, splits_dir, sources=("uk", "ru"), chunksize=10
     manifest = load_manifest(splits_dir, name=manifest_name)
     result = {}
 
+
     if reannotated:
-        if tuple(sources) != ("uk",):
-            raise ValueError("Reannotated data is available only for Ukrainian")
-
         reannotated_dir = Path(reannotated_dir)
-        source_manifest = manifest[manifest["source"] == "uk"]
 
-        for split in source_manifest["split"].unique():
-            path = reannotated_dir / f"reannotated_{split}.csv"
+        for source in sources:
+            source_manifest = manifest[manifest["source"] == source]
 
-            if not path.is_file():
-                raise FileNotFoundError(f"Reannotated dataset not found: {path}")
+            for split in source_manifest["split"].unique():
+                path = reannotated_dir / source / f"reannotated_{split}.csv"
 
-            df = pd.read_csv(path, keep_default_na=False)
-            df = df.set_index("row_id", verify_integrity=True)
+                if not path.is_file():
+                    raise FileNotFoundError(f"Reannotated dataset not found: {path}")
 
-            expected_ids = source_manifest.loc[source_manifest["split"] == split, "row_id"]
+                df = pd.read_csv(path, keep_default_na=False)
+                df = df.set_index("row_id", verify_integrity=True)
+                expected_ids = source_manifest.loc[source_manifest["split"] == split, "row_id"]
 
-            if set(df.index) != set(expected_ids):
-                raise ValueError(f"Row IDs do not match manifest: {split}")
+                if set(df.index) != set(expected_ids):
+                    raise ValueError(f"Row IDs do not match manifest: {source}_{split}")
 
-            result[f"uk_{split}"] = df.loc[expected_ids].copy()
+                result[f"{source}_{split}"] = df.loc[expected_ids].copy()
 
         return result
+
 
     data_dir = get_data_dir(environment)
 
